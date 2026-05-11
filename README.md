@@ -200,6 +200,53 @@ Missing getters fall back to the CLI default.
 
 After a successful mint, parses ERC-721 `Transfer(0x0, minter, tokenId)` events from the receipt and sends `safeTransferFrom(minter, dest, tokenId)` for each. ERC-1155 is not auto-handled.
 
+The Transfer scan is **not restricted to the called contract** — this is what makes sale-contract proxies (next section) work end-to-end.
+
+---
+
+## Sale-contract / minter-proxy mints
+
+Some platforms split minting into two contracts:
+
+- **NFT contract** — holds the tokens, emits `Transfer` events
+- **Sale contract** — handles pricing, allowlists, phases; calls into the NFT contract
+
+Examples: Transient Labs (`TLStacks721`), Manifold lazy-mint, Zora ERC721 Drop minter modules.
+
+For these, point `--contract` at the **sale contract**, not the NFT. The CLI:
+
+- sends `purchase(...)` (or equivalent) to the sale contract
+- the sale contract calls `externalMint` / `_mintTo` / similar on the NFT contract
+- `--to` auto-transfer still works — Transfer events are picked up from the underlying NFT contract via receipt scanning
+
+### Example — Transient Labs Still Alive
+
+`https://www.transient.xyz/mint/still-alive` is sold through `TLStacks721 v2.3.1` at `0x384092784cfaa91efaa77870c04d958e20840242`. The underlying NFT lives at `0x52caee4275765dde6f47f874e7cf8181f5b5e5da`. Public mint:
+
+```bash
+opensea-cli mint \
+  --contract 0x384092784cfaa91efaa77870c04d958e20840242 \
+  --fn 'purchase(address,address,uint256,uint256,bytes32[])' \
+  --args '["0x52caee4275765dde6f47f874e7cf8181f5b5e5da","self","qty",0,[]]' \
+  --price 0.0278 \
+  --qty 1 \
+  --gas-limit 500000 \
+  --start-ts 1778515200 \
+  --priority auto:90+1 \
+  --to 0xColdWalletDestination
+```
+
+Notes for the `purchase` ABI:
+- arg 0 = NFT address (the ERC721TL)
+- arg 1 = recipient — `"self"` resolves to the minter
+- arg 2 = quantity — `"qty"` resolves to `--qty`
+- arg 3 = `presaleNumberCanMint` — `0` for public mint
+- arg 4 = merkle proof — `[]` for public mint
+- `--price` includes the **protocolFee** (call `protocolFee()` on the TLStacks contract to read it; for current drops it is `0.0009 ETH/NFT`, so `publicCost + 0.0009`)
+- `--gas-limit 500000` because the sale contract delegates to `externalMint` — direct ERC-721 mints fit well under 300k
+
+To find the right TLStacks deployment + drop config for any Transient drop, call `getDrop(nftAddress)` on each TLStacks721 version in [`deployments.json`](https://github.com/Transient-Labs/tl-stacks/blob/main/deployments.json).
+
 ---
 
 ## Safety
