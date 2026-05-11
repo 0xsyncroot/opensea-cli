@@ -1,94 +1,52 @@
 # opensea-cli
 
-Fast NFT public-mint CLI for Ethereum mainnet. Submits signed transactions as private bundles through **Flashbots + Titan + Beaverbuild + rsync + Payload + Blocknative** in parallel, with adaptive priority-fee bidding and on-chain auto-detection of mint price, supply, and start time.
+Ethereum NFT public-mint CLI. Submits signed transactions as private bundles to **Flashbots, Titan, Beaverbuild, rsync, Payload, Blocknative** in parallel, with adaptive priority-fee bidding and on-chain auto-detect of mint price, supply, and start time.
 
-Built for snipers who want one of the next 3 blocks, not a few seconds later.
-
-```text
+```bash
 opensea-cli mint --contract 0xYourContract --to 0xColdWallet
 ```
 
-That single line will:
-
-1. probe the contract for `name`, `totalSupply`, `mintPrice`, `publicSaleStartTime`, etc.
-2. wait until the mint opens (if a future start time is found on-chain)
-3. re-verify the contract 30 s before fire and run a 10 s countdown
-4. broadcast the same signed bundle to 6 block builders for the next 3 blocks
-5. on success, auto-transfer the minted NFTs to your cold wallet
-
-Everything is overridable by flags. The private key never touches disk.
-
----
-
 ## Features
 
-- **Multi-builder bundle broadcast** — Flashbots, Titan, Beaverbuild, rsync, Payload, Blocknative in parallel (~18 submissions per mint window)
-- **Adaptive priority fee** — `auto:75+0.5` reads the last 5 blocks' priority fee histogram and bids `p75 + 0.5 gwei` so you win the slot without overpaying
-- **Auto-detect from contract** — `price()`, `publicSaleStartTime()`, `maxPerWallet()`, etc. are probed and filled in if you don't pass them
-- **Scheduled mode** — sleeps until the announced start, then runs a final on-chain re-check (supply moved? sale flag flipped?) and a 10 s countdown before fire
-- **Hard balance check** — refuses to sign if wallet balance is below mint cost; warns if below worst-case (mint + gas)
-- **Auto-transfer after mint** — `--to 0xCold` parses the `Transfer(0x0 → minter, tokenId)` events and forwards minted ERC-721s to a destination wallet
-- **Pre-flight simulation** — every transaction is run through `eth_callBundle` against current state; reverts are caught before any submission
-- **No-key default** — private key is prompted with hidden input. CLI override (`-k`) supported, with explicit warning about shell history
-- **Cancel-anytime** — Ctrl+C is handled cleanly with an accurate message about whether bundles were already broadcast
+- Multi-builder bundle broadcast — 6 relays × N blocks per mint window
+- Adaptive priority fee from `eth_feeHistory` (`auto:p75+0.5` by default)
+- On-chain auto-detect: `price`, `publicSaleStartTime`, `totalSupply`, sale flag, `paused`, `maxPerWallet`
+- Scheduled mode with T-30 s re-probe + 10 s countdown + Ctrl+C cancel
+- 4-tier balance check (refuses to sign if balance < mint price)
+- Auto-transfer minted ERC-721s to a destination wallet
+- Pre-flight simulation via `eth_callBundle` before every submission
+- Hidden private-key prompt; `-k` override available
 
 ---
 
 ## Install
 
-Requires Node.js 20 or newer.
+Node.js 20+.
 
 ```bash
 git clone https://github.com/0xsyncroot/opensea-cli.git
 cd opensea-cli
-bash install.sh
+bash install.sh           # or `bash install.sh local` for no global symlink
 opensea-cli help
 ```
-
-Local-only (no global symlink):
-
-```bash
-bash install.sh local
-node dist/index.js help
-```
-
-The `install.sh` script also accepts `pnpm` and `yarn` if either is on your PATH.
 
 ---
 
 ## Quick start
 
-The CLI has three commands. Always run them in order on a new contract.
-
 ```bash
-# 1. Preflight — no key needed, just sanity-check the contract
-opensea-cli check --contract 0xYourContract
-
-# 2. Dry-run — sign locally, simulate through Flashbots, do not submit
-opensea-cli test --contract 0xYourContract
-
-# 3. Mint — submit bundles to all relays
-opensea-cli mint --contract 0xYourContract
+opensea-cli check --contract 0xYourContract                       # preflight
+opensea-cli test  --contract 0xYourContract                       # sign + simulate, no submit
+opensea-cli mint  --contract 0xYourContract --to 0xColdWallet     # live mint, auto-transfer
 ```
 
-`test` and `mint` ask for your private key with hidden input. For unattended runs you can pass `-k 0x...`, but be aware that this lands in `~/.bash_history` and is visible to `ps`.
+`test` and `mint` ask for the private key (hidden input). `-k 0x...` skips the prompt.
 
-### Public mint with auto-transfer
-
-```bash
-opensea-cli mint \
-  --rpc https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY \
-  --contract 0xYourContract \
-  --to 0xColdWallet
-```
-
-### Scheduled mint at a known start time
+Scheduled (auto if contract exposes `publicSaleStartTime`):
 
 ```bash
 opensea-cli mint --contract 0xYourContract --start-ts 1746950400
 ```
-
-If the contract exposes `publicSaleStartTime`, you can omit `--start-ts` — the CLI will pick it up automatically.
 
 ---
 
@@ -174,9 +132,9 @@ PREFLIGHT_LEAD_SEC=30
 
 ## How it works
 
-### Multi-builder bundle broadcast
+### Multi-builder broadcast
 
-Post-merge, blocks are produced by competing builders, not by validators directly. The market is currently fragmented: Titan, Beaverbuild, rsync, Flashbots Builder, and Payload each win a meaningful share of blocks. The CLI sends the *same* signed transaction as a bundle to every relay it knows for the next *N* blocks. Whichever builder wins the slot, your tx is in their block.
+The same signed transaction is sent as a bundle to every relay for the next *N* blocks. Whichever builder wins the slot, the tx is in the block.
 
 ```text
                           ┌── Flashbots ───┐
@@ -187,74 +145,60 @@ signed tx  ──▶  bundle ──▶│── Beaverbuild ─│──▶ winn
                           └── Blocknative ─┘
 ```
 
-### Adaptive priority fee
+### Priority fee modes (`--priority`)
 
-Bidding a fixed priority fee is wasteful when the network is cold and ineffective when it's hot. The CLI calls `eth_feeHistory` for the last 5 blocks and computes the percentile you choose:
+| Value             | Bid                          |
+|-------------------|------------------------------|
+| `2`               | flat 2 gwei                  |
+| `auto` (default)  | `p75 + 0.5 gwei`             |
+| `auto:99+2`       | `p99 + 2 gwei` (FOMO drops)  |
 
-| Format             | Bid                          | When to use         |
-|--------------------|------------------------------|---------------------|
-| `2`                | flat 2 gwei                  | manual control      |
-| `auto`             | `p75 + 0.5 gwei` (default)   | normal drops        |
-| `auto:75+0.5`      | same as above                | explicit            |
-| `auto:99+2`        | `p99 + 2 gwei`               | hyped / FOMO drops  |
+Percentiles come from `eth_feeHistory` over the last 5 blocks.
 
 ### Scheduled mode
 
-If `--start-ts` / `--start-block` is set, or the contract exposes `publicSaleStartTime` / `mintStartTime` / `mintStart`, the CLI:
+Triggered by `--start-ts`, `--start-block`, or auto-detected `publicSaleStartTime` on the contract:
 
-1. waits cancelably until `T - preflight-lead` (default `T - 30 s`)
-2. re-probes the contract: `totalSupply` (movement?), `saleIsActive`, `paused`
-3. re-fetches the gas market (p50/p75/p99)
-4. shows a 10 s countdown — Ctrl+C now aborts cleanly with zero bundles broadcast
-5. fires bundles to all relays for the next `blocks` blocks
+1. cancelable wait until `T − preflight-lead` (default 30 s)
+2. re-probe contract (`totalSupply`, sale flag, `paused`), re-fetch gas market
+3. 10 s countdown — Ctrl+C still aborts with zero bundles broadcast
+4. fire bundles to all relays for the next *N* blocks
 
-### Auto-detect
+### Auto-detected view functions
 
-These contract calls are tried during `check` / `test` / `mint` and used to fill in flags you didn't pass:
+| Field      | Tried                                                                                |
+|------------|--------------------------------------------------------------------------------------|
+| price      | `price`, `mintPrice`, `publicSalePrice`, `cost`, `PUBLIC_PRICE`, `MINT_PRICE`        |
+| start time | `publicSaleStartTime`, `mintStartTime`, `mintStart`                                  |
+| supply     | `totalSupply`, `MAX_SUPPLY` / `maxSupply` / `MAX_TOKENS`                             |
+| sale state | `saleIsActive`, `publicMintActive`, `isMintActive`, `mintActive`, `publicSaleActive` |
+| per-wallet | `maxPerWallet`, `MAX_PER_WALLET`, `maxMintPerTx`                                     |
+| identity   | `name`, `symbol`, `owner`, `paused`                                                  |
 
-| Field            | Tried view-functions                                                                |
-|------------------|-------------------------------------------------------------------------------------|
-| price            | `price`, `mintPrice`, `publicSalePrice`, `cost`, `PUBLIC_PRICE`, `MINT_PRICE`       |
-| start time       | `publicSaleStartTime`, `mintStartTime`, `mintStart`                                 |
-| supply           | `totalSupply`, `MAX_SUPPLY` / `maxSupply` / `MAX_TOKENS`                            |
-| sale state       | `saleIsActive`, `publicMintActive`, `isMintActive`, `mintActive`, `publicSaleActive`|
-| per-wallet limit | `maxPerWallet`, `MAX_PER_WALLET`, `maxMintPerTx`                                    |
-| paused           | `paused`                                                                            |
-| identity         | `name`, `symbol`, `owner`                                                           |
+Missing getters fall back to the CLI default.
 
-If a getter is missing, that field is just left at its CLI default.
+### Balance check
 
-### Balance check (4 tiers)
+| Condition                            | Action                       |
+|--------------------------------------|------------------------------|
+| `balance == 0`                       | red hard exit                |
+| `balance < price × qty`              | red hard exit (would revert) |
+| `price × qty ≤ balance < worst-case` | yellow warn, continue        |
+| `balance ≥ worst-case`               | green, proceed               |
 
-Before signing, the CLI fetches the minter's ETH balance and prints one of:
+### Auto-transfer (`--to`)
 
-| Condition                                | Color  | Action                                |
-|------------------------------------------|--------|---------------------------------------|
-| `balance == 0`                           | red    | hard exit                             |
-| `balance < price × qty`                  | red    | hard exit (tx would revert)           |
-| `price × qty ≤ balance < worst-case`     | yellow | warn, allow user to continue          |
-| `balance ≥ worst-case`                   | green  | proceed                               |
-
-### Auto-transfer
-
-If `--to 0xDest` is set, after a successful mint the CLI:
-
-1. parses the receipt for ERC-721 `Transfer(address(0), minter, tokenId)` events emitted by the target contract
-2. for each minted token id, sends `safeTransferFrom(minter, dest, tokenId)` with a low priority fee (no rush)
-3. prints a colored success/fail summary
-
-ERC-1155 contracts emit `TransferSingle` / `TransferBatch` and are not currently auto-handled — transfer those manually.
+After a successful mint, parses ERC-721 `Transfer(0x0, minter, tokenId)` events from the receipt and sends `safeTransferFrom(minter, dest, tokenId)` for each. ERC-1155 is not auto-handled.
 
 ---
 
 ## Safety
 
-- **Use a fresh burner wallet** funded with only enough ETH for the mint + worst-case gas. Move funds out immediately, or pass `--to` to a cold wallet that the CLI will auto-transfer to.
-- **Private key precedence**: hidden prompt → `-k` flag. There is no env-var path for the key.
-- **Never commit `.env`** — it is in `.gitignore` for this reason.
-- **`check` is risk-free**. `test` signs but does not submit. Only `mint` can spend ETH.
-- The CLI **refuses to sign** if the minter balance is below the mint price. It will not waste your gas on a guaranteed revert.
-- Cancellation with **Ctrl+C** is safe at every stage *before* the 10 s countdown finishes; after that, bundles may already be on a builder's queue.
+- Use a fresh burner wallet; pass `--to` to forward NFTs to a cold wallet right after mint.
+- Private key: hidden prompt by default, or `-k` (logged in shell history & `ps`).
+- `check` and `test` cannot spend ETH. Only `mint` broadcasts.
+- The CLI refuses to sign if balance < mint price.
+- Ctrl+C aborts cleanly until the 10 s countdown ends.
 
 ---
 
@@ -277,28 +221,12 @@ ERC-1155 contracts emit `TransferSingle` / `TransferBatch` and are not currently
 
 ```bash
 npm install
-npm run build           # compile TypeScript to dist/
-node dist/index.js help # run from source
-
-# during edits:
-npx tsx src/index.ts help   # run TS directly without rebuild
+npm run build               # tsc → dist/
+node dist/index.js help     # run compiled
+npx tsx src/index.ts help   # run TS without rebuild
 ```
 
-The codebase is small (~1k LOC TypeScript) and intentionally dependency-light: `ethers v6`, `chalk`, `dotenv`, `prompts`. No bundler. Module layout:
-
-```
-src/
-├── index.ts        — CLI entrypoint, command dispatch, mint flow
-├── args.ts         — argv parsing (node:util parseArgs)
-├── config.ts       — merge flags + env into a typed Config
-├── flashbots.ts    — relay client (eth_sendBundle / eth_callBundle)
-├── mint.ts         — calldata build, EIP-1559 sign
-├── probe.ts        — generic ERC-721 / mint-state view-function probes
-├── transfer.ts     — auto-transfer after successful mint
-├── timing.ts       — clock drift, fee history, cancelable waits, countdown
-├── prompt.ts       — hidden private-key input
-└── logger.ts       — colored output helpers
-```
+Deps: `ethers v6`, `chalk`, `dotenv`, `prompts`. Sources under `src/`.
 
 ---
 
@@ -310,4 +238,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Disclaimer
 
-This tool interacts with mainnet smart contracts and broadcasts signed transactions that move real ETH. The author makes no warranty as to correctness, profitability, or safety. **You are responsible for everything you sign.** Read the source before using a key with real funds, and start with `check` and `test` on a small burner wallet.
+Mainnet transactions move real ETH. No warranty. **You are responsible for everything you sign.** Start with `check` and `test` on a burner.
