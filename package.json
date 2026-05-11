@@ -1,0 +1,52 @@
+{
+  "name": "opensea-cli",
+  "version": "0.1.0",
+  "description": "Fast Ethereum NFT public-mint CLI via Flashbots + multi-builder bundles, with on-chain auto-detect of price/start time/supply and adaptive priority fee bidding.",
+  "keywords": [
+    "nft", "mint", "ethereum", "flashbots", "mev", "titan-builder", "beaverbuild",
+    "erc721", "sniper", "bundle", "cli", "opensea"
+  ],
+  "homepage": "https://github.com/0xsyncroot/opensea-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xsyncroot/opensea-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xsyncroot/opensea-cli/issues"
+  },
+  "license": "MIT",
+  "author": "0xsyncroot",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "opensea-cli": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".env.example",
+    "install.sh"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsx src/index.ts",
+    "check": "tsx src/index.ts check",
+    "test": "tsx src/index.ts test",
+    "mint": "tsx src/index.ts mint",
+    "prepare": "tsc && chmod +x dist/index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
