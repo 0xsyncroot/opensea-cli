@@ -1,10 +1,51 @@
 # opensea-cli
 
-Ethereum NFT public-mint CLI. Submits signed transactions as private bundles to **Flashbots, Titan, Beaverbuild, rsync, Payload, Blocknative** in parallel, with adaptive priority-fee bidding and on-chain auto-detect of mint price, supply, and start time.
+Ethereum NFT public-mint CLI. Sends signed transactions as private bundles to **Flashbots, Titan, Beaverbuild, rsync, Payload, Blocknative** in parallel, with adaptive priority-fee bidding and on-chain auto-detect of mint price, supply, and start time.
 
 ```bash
 opensea-cli mint --contract 0xYourContract --to 0xColdWallet
 ```
+
+---
+
+## Install
+
+You only need **Node.js 20 or newer** ([download here](https://nodejs.org/)). Then one command:
+
+```bash
+npm install -g https://github.com/0xsyncroot/opensea-cli/tarball/main
+```
+
+Check it works:
+
+```bash
+opensea-cli help
+```
+
+That's it. No clone, no build, no config files. Re-run the same command later to update.
+
+To uninstall: `npm uninstall -g opensea-cli`.
+
+---
+
+## Quick start (3 commands)
+
+```bash
+# 1. Sanity-check the contract — no key needed, no risk
+opensea-cli check --contract 0xYourContract
+
+# 2. Dry-run with your wallet — signs locally, simulates via Flashbots, DOES NOT submit
+opensea-cli test  --contract 0xYourContract
+
+# 3. Live mint, then auto-transfer to a cold wallet
+opensea-cli mint  --contract 0xYourContract --to 0xColdWallet
+```
+
+`test` and `mint` will ask for your private key (hidden, not stored). Paste it, hit Enter.
+
+If the contract advertises a future start time on-chain (`publicSaleStartTime`), `mint` waits until then and re-verifies the contract 30 s before fire. Press Ctrl+C any time to abort.
+
+---
 
 ## Features
 
@@ -16,37 +57,6 @@ opensea-cli mint --contract 0xYourContract --to 0xColdWallet
 - Auto-transfer minted ERC-721s to a destination wallet
 - Pre-flight simulation via `eth_callBundle` before every submission
 - Hidden private-key prompt; `-k` override available
-
----
-
-## Install
-
-Node.js 20+.
-
-```bash
-git clone https://github.com/0xsyncroot/opensea-cli.git
-cd opensea-cli
-bash install.sh           # or `bash install.sh local` for no global symlink
-opensea-cli help
-```
-
----
-
-## Quick start
-
-```bash
-opensea-cli check --contract 0xYourContract                       # preflight
-opensea-cli test  --contract 0xYourContract                       # sign + simulate, no submit
-opensea-cli mint  --contract 0xYourContract --to 0xColdWallet     # live mint, auto-transfer
-```
-
-`test` and `mint` ask for the private key (hidden input). `-k 0x...` skips the prompt.
-
-Scheduled (auto if contract exposes `publicSaleStartTime`):
-
-```bash
-opensea-cli mint --contract 0xYourContract --start-ts 1746950400
-```
 
 ---
 
@@ -220,10 +230,11 @@ After a successful mint, parses ERC-721 `Transfer(0x0, minter, tokenId)` events 
 ## Development
 
 ```bash
+git clone https://github.com/0xsyncroot/opensea-cli.git
+cd opensea-cli
 npm install
-npm run build               # tsc → dist/
-node dist/index.js help     # run compiled
 npx tsx src/index.ts help   # run TS without rebuild
+npm run build               # tsc → dist/
 ```
 
 Deps: `ethers v6`, `chalk`, `dotenv`, `prompts`. Sources under `src/`.
