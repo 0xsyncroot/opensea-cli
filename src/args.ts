@@ -54,6 +54,7 @@ export function parseFlags(argv: string[]): Flags {
       to:            { type: 'string' },
       yes:           { type: 'boolean', short: 'y' },
       help:          { type: 'boolean', short: 'h' },
+      version:       { type: 'boolean', short: 'v' },
     },
   });
 

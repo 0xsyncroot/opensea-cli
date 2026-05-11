@@ -10,7 +10,7 @@ import { prepare } from './mint.js';
 import { clockDrift, waitUntilUnix, waitUntilBlock, feeHistoryPercentiles, gwei, countdown, } from './timing.js';
 import { probeContract, findProbe, probeSaleContract, PRICE_LABELS, START_LABELS, MAX_PER_WALLET_LABELS, } from './probe.js';
 import { extractMintedIds, transferAllTo, printTransferSummary } from './transfer.js';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 let submittedAny = false;
 process.on('SIGINT', () => {
     process.stdout.write('\n');
@@ -39,11 +39,12 @@ function printHelp() {
     console.log(`  ${r('--contract')} <0x...>      NFT contract to mint`);
     console.log();
     console.log(b('AUTO-FILLED FROM CONTRACT') + g('  — pass to override'));
-    console.log(`  ${y('--price')} <eth>           ETH per token. ${g('Default: probed from contract or 0')}`);
+    console.log(`  ${y('--price')} <eth>           ETH per token. ${g('Default: probed from price()/mintPrice() OR sale-contract getDrop()')}`);
     console.log(`  ${y('--fn')} <sig>              Mint function. ${g('Default: mint(uint256)')}`);
-    console.log(`  ${y('--qty')} <n>               Quantity. ${g('Default: 1 (warns if > maxPerWallet on contract)')}`);
-    console.log(`  ${y('--start-ts')} <unix>       Mint open time. ${g('Default: probed from contract.publicSaleStartTime/mintStartTime')}`);
+    console.log(`  ${y('--qty')} <n>               Quantity. ${g('Default: 1 (warns if > maxPerWallet)')}`);
+    console.log(`  ${y('--start-ts')} <unix>       Mint open time. ${g('Default: probed from publicSaleStartTime() OR TLStacks startTime+presaleDuration')}`);
     console.log(`  ${y('--start-block')} <n>       Wait until block N`);
+    console.log(g(`  Supports sale-contract proxies (Transient Labs TLStacks) — pass NFT addr as args[0].`));
     console.log();
     console.log(b('PRIVATE KEY'));
     console.log(`  ${y('-k, --private-key')} <hex>  Funds-holding key (0x… 32-byte hex)`);
@@ -518,6 +519,10 @@ async function runMintFlow(cfg, flags, mode, autoYes) {
 }
 async function main() {
     const flags = parseFlags(process.argv.slice(2));
+    if (process.argv.slice(2).some((a) => a === '-v' || a === '--version')) {
+        console.log(`opensea-cli v${VERSION}`);
+        return;
+    }
     if (flags.command === 'help' || flags.command === 'unknown') {
         printHelp();
         return;

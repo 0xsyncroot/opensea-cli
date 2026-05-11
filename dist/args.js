@@ -26,6 +26,7 @@ export function parseFlags(argv) {
             to: { type: 'string' },
             yes: { type: 'boolean', short: 'y' },
             help: { type: 'boolean', short: 'h' },
+            version: { type: 'boolean', short: 'v' },
         },
     });
     const first = positionals[0]?.toLowerCase();

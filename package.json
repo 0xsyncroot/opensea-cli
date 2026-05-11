@@ -1,6 +1,6 @@
 {
   "name": "opensea-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fast Ethereum NFT public-mint CLI via Flashbots + multi-builder bundles, with on-chain auto-detect of price/start time/supply and adaptive priority fee bidding.",
   "keywords": [
     "nft", "mint", "ethereum", "flashbots", "mev", "titan-builder", "beaverbuild",
