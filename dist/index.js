@@ -8,7 +8,7 @@ import { log } from './logger.js';
 import { loadPrivateKey, confirm } from './prompt.js';
 import { prepare } from './mint.js';
 import { clockDrift, waitUntilUnix, waitUntilBlock, feeHistoryPercentiles, gwei, countdown, } from './timing.js';
-import { probeContract, findProbe, PRICE_LABELS, START_LABELS, MAX_PER_WALLET_LABELS, } from './probe.js';
+import { probeContract, findProbe, probeSaleContract, PRICE_LABELS, START_LABELS, MAX_PER_WALLET_LABELS, } from './probe.js';
 import { extractMintedIds, transferAllTo, printTransferSummary } from './transfer.js';
 const VERSION = '0.1.0';
 let submittedAny = false;
@@ -220,9 +220,9 @@ async function checkMode(cfg) {
     else
         log.ok(`ready — run \`opensea-cli test --contract ${cfg.contract}\` to dry-run with your key`);
 }
-function autoFillFromProbes(cfg, probes) {
+async function autoFillFromProbes(cfg, probes, provider) {
     const out = {};
-    // PRICE — only if user did NOT pass --price / MINT_PRICE_ETH
+    // PRICE / START / MAX-PER-WALLET from direct view-functions on cfg.contract
     if (!cfg.priceExplicit) {
         const p = findProbe(probes, PRICE_LABELS);
         if (p && p.value !== '0') {
@@ -234,7 +234,6 @@ function autoFillFromProbes(cfg, probes) {
             catch { /* not a number */ }
         }
     }
-    // START TIME — only if user did NOT pass --start-ts / --start-block
     if (!cfg.startExplicit) {
         const s = findProbe(probes, START_LABELS);
         if (s) {
@@ -246,7 +245,6 @@ function autoFillFromProbes(cfg, probes) {
             }
         }
     }
-    // MAX PER WALLET — soft warn if cfg.quantity exceeds
     const m = findProbe(probes, MAX_PER_WALLET_LABELS);
     if (m) {
         try {
@@ -256,6 +254,32 @@ function autoFillFromProbes(cfg, probes) {
             }
         }
         catch { /* */ }
+    }
+    // SALE-CONTRACT (TLStacks-like) probe: when args[0] looks like an NFT address,
+    // try calling getDrop(nft) on cfg.contract. Fills price / start / gas-limit
+    // when user did not pass them.
+    const firstArg = cfg.mintArgs[0];
+    if (typeof firstArg === 'string' && /^0x[0-9a-fA-F]{40}$/.test(firstArg)) {
+        const tl = await probeSaleContract(provider, cfg.contract, firstArg);
+        if (tl) {
+            out.saleDrop = tl;
+            if (!cfg.priceExplicit && tl.totalPerTokenWei > 0n) {
+                cfg.mintValueWei = tl.totalPerTokenWei * BigInt(cfg.quantity);
+                out.autoPrice = `${formatEther(tl.totalPerTokenWei)} ETH × ${cfg.quantity} = ${formatEther(cfg.mintValueWei)} ETH  ` +
+                    `(TLStacks: publicCost ${formatEther(tl.publicCostWei)} + fee ${formatEther(tl.protocolFeeWei)})`;
+            }
+            if (!cfg.startExplicit && tl.publicOpensTs > Math.floor(Date.now() / 1000)) {
+                cfg.mintStartTs = tl.publicOpensTs;
+                out.autoStart = tl.publicOpensTs;
+            }
+            // TLStacks delegates to externalMint — bump gas headroom if user left default
+            if (cfg.gasLimit < 400000n)
+                cfg.gasLimit = 500000n;
+            // Per-wallet cap from the sale contract
+            if (BigInt(cfg.quantity) > tl.allowancePerWallet && tl.allowancePerWallet > 0n) {
+                out.autoMaxPerWallet = `${tl.allowancePerWallet} (your --qty ${cfg.quantity} exceeds — tx will revert)`;
+            }
+        }
     }
     return out;
 }
@@ -270,7 +294,11 @@ async function runMintFlow(cfg, flags, mode, autoYes) {
     catch (e) {
         log.warn(`probe failed: ${e.message} — proceeding with passed flags only`);
     }
-    const auto = autoFillFromProbes(cfg, initialProbes);
+    const auto = await autoFillFromProbes(cfg, initialProbes, provider);
+    if (auto.saleDrop) {
+        const phases = ['NOT_CONFIGURED', 'NOT_STARTED', 'PRESALE', 'PUBLIC_SALE', 'ENDED'];
+        log.info(`sale-contract drop detected — ${phases[auto.saleDrop.phase] ?? 'phase ' + auto.saleDrop.phase}, ${auto.saleDrop.supplyRemaining} left, allowance ${auto.saleDrop.allowancePerWallet}/wallet`);
+    }
     if (auto.autoPrice)
         log.info(`auto-detected price: ${auto.autoPrice}`);
     if (auto.autoStart)

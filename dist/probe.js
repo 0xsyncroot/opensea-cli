@@ -70,6 +70,45 @@ export const START_LABELS = ['publicSaleStartTime', 'mintStartTime', 'mintStart'
 export const ACTIVE_LABELS = ['saleIsActive', 'publicMintActive', 'isMintActive', 'mintActive', 'publicSaleActive'];
 export const MAX_PER_WALLET_LABELS = ['maxPerWallet', 'MAX_PER_WALLET', 'maxMintPerTx'];
 export const MAX_SUPPLY_LABELS = ['MAX_SUPPLY', 'maxSupply', 'MAX_TOKENS'];
+const TL_DROP_TUPLE = 'tuple(uint8 dropType, address payoutReceiver, uint256 initialSupply, uint256 supply, uint256 allowance, address currencyAddress, uint256 startTime, uint256 presaleDuration, uint256 presaleCost, bytes32 presaleMerkleRoot, uint256 publicDuration, uint256 publicCost, int256 decayRate, string baseUri)';
+export async function probeSaleContract(provider, saleContract, nftAddress) {
+    try {
+        const iface = new Interface([
+            `function getDrop(address) view returns (${TL_DROP_TUPLE})`,
+            'function protocolFee() view returns (uint256)',
+            'function getDropPhase(address) view returns (uint8)',
+        ]);
+        const [dropRaw, feeRaw, phaseRaw] = await Promise.all([
+            provider.call({ to: saleContract, data: iface.encodeFunctionData('getDrop', [nftAddress]) }).catch(() => '0x'),
+            provider.call({ to: saleContract, data: iface.encodeFunctionData('protocolFee', []) }).catch(() => '0x'),
+            provider.call({ to: saleContract, data: iface.encodeFunctionData('getDropPhase', [nftAddress]) }).catch(() => '0x'),
+        ]);
+        if (dropRaw === '0x' || dropRaw.length <= 2)
+            return null;
+        const [drop] = iface.decodeFunctionResult('getDrop', dropRaw);
+        if (drop.dropType === 0n)
+            return null;
+        const fee = feeRaw !== '0x' ? iface.decodeFunctionResult('protocolFee', feeRaw)[0] : 0n;
+        const phase = phaseRaw !== '0x' ? Number(iface.decodeFunctionResult('getDropPhase', phaseRaw)[0]) : 0;
+        const publicOpensTs = Number(drop.startTime) + Number(drop.presaleDuration);
+        const publicEndsTs = drop.publicDuration > 0n ? publicOpensTs + Number(drop.publicDuration) : 0;
+        return {
+            kind: 'tlstacks',
+            publicCostWei: drop.publicCost,
+            protocolFeeWei: fee,
+            totalPerTokenWei: drop.publicCost + fee,
+            publicOpensTs,
+            publicEndsTs,
+            supplyRemaining: drop.supply,
+            allowancePerWallet: drop.allowance,
+            currency: drop.currencyAddress,
+            phase,
+        };
+    }
+    catch {
+        return null;
+    }
+}
 export function formatProbeValue(label, value) {
     // price-like fields → also show as ETH if it's a big wei number
     if (/price|cost|PRICE/.test(label)) {
