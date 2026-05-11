@@ -27,12 +27,11 @@
     "install.sh"
   ],
   "scripts": {
-    "build": "npx tsc && chmod +x dist/index.js",
+    "build": "tsc && chmod +x dist/index.js",
     "dev": "tsx src/index.ts",
     "check": "tsx src/index.ts check",
     "test": "tsx src/index.ts test",
-    "mint": "tsx src/index.ts mint",
-    "prepare": "npx tsc && chmod +x dist/index.js"
+    "mint": "tsx src/index.ts mint"
   },
   "dependencies": {
     "chalk": "^5.3.0",
