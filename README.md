@@ -19,10 +19,17 @@ npm install -g https://github.com/0xsyncroot/opensea-cli/tarball/main
 Check it works:
 
 ```bash
+opensea-cli --version    # → opensea-cli v0.2.0
 opensea-cli help
 ```
 
-That's it. No clone, no build, no config files. Re-run the same command later to update.
+### Upgrade to the latest version
+
+npm caches the tarball by URL, so re-running the install command above can serve the old version. Force a fresh fetch:
+
+```bash
+npm uninstall -g opensea-cli && npm cache clean --force && npm install -g https://github.com/0xsyncroot/opensea-cli/tarball/main
+```
 
 To uninstall: `npm uninstall -g opensea-cli`.
 
@@ -221,31 +228,43 @@ For these, point `--contract` at the **sale contract**, not the NFT. The CLI:
 
 ### Example — Transient Labs Still Alive
 
-`https://www.transient.xyz/mint/still-alive` is sold through `TLStacks721 v2.3.1` at `0x384092784cfaa91efaa77870c04d958e20840242`. The underlying NFT lives at `0x52caee4275765dde6f47f874e7cf8181f5b5e5da`. Public mint:
+`https://www.transient.xyz/mint/still-alive` is sold through `TLStacks721 v2.3.1` at `0x384092784cfaa91efaa77870c04d958e20840242`. The underlying NFT lives at `0x52caee4275765dde6f47f874e7cf8181f5b5e5da`. Since v0.2.0 the CLI auto-detects this pattern — just give it the contracts:
 
 ```bash
 opensea-cli mint \
   --contract 0x384092784cfaa91efaa77870c04d958e20840242 \
   --fn 'purchase(address,address,uint256,uint256,bytes32[])' \
   --args '["0x52caee4275765dde6f47f874e7cf8181f5b5e5da","self","qty",0,[]]' \
-  --price 0.0278 \
-  --qty 1 \
-  --gas-limit 500000 \
-  --start-ts 1778515200 \
-  --priority auto:90+1 \
   --to 0xColdWalletDestination
 ```
 
-Notes for the `purchase` ABI:
-- arg 0 = NFT address (the ERC721TL)
-- arg 1 = recipient — `"self"` resolves to the minter
-- arg 2 = quantity — `"qty"` resolves to `--qty`
-- arg 3 = `presaleNumberCanMint` — `0` for public mint
-- arg 4 = merkle proof — `[]` for public mint
-- `--price` includes the **protocolFee** (call `protocolFee()` on the TLStacks contract to read it; for current drops it is `0.0009 ETH/NFT`, so `publicCost + 0.0009`)
-- `--gas-limit 500000` because the sale contract delegates to `externalMint` — direct ERC-721 mints fit well under 300k
+When the first `--args` entry looks like an NFT address, the CLI calls `getDrop(nft)` + `protocolFee()` + `getDropPhase(nft)` on the sale contract and auto-fills:
 
-To find the right TLStacks deployment + drop config for any Transient drop, call `getDrop(nftAddress)` on each TLStacks721 version in [`deployments.json`](https://github.com/Transient-Labs/tl-stacks/blob/main/deployments.json).
+- **--price** = `publicCost + protocolFee` per NFT (e.g. `0.0269 + 0.0009 = 0.0278`)
+- **--start-ts** = `startTime + presaleDuration` (the moment presale ends and public opens)
+- **--gas-limit** = bumped to 500 000 (sale contracts delegate to `externalMint`, which costs more than a plain mint)
+- warns when `--qty` exceeds the on-chain per-wallet `allowance`
+
+Override anything by passing it explicitly. For a busy drop, bump priority:
+
+```bash
+opensea-cli mint --contract 0x384092784cfaa91efaa77870c04d958e20840242 \
+  --fn 'purchase(address,address,uint256,uint256,bytes32[])' \
+  --args '["0x52caee4275765dde6f47f874e7cf8181f5b5e5da","self","qty",0,[]]' \
+  --qty 3 --priority auto:90+2 --to 0xCold
+```
+
+ABI cheatsheet for `purchase`:
+
+| arg | meaning | typical value |
+|-----|---------|--------------|
+| 0   | NFT contract            | the ERC-721 address |
+| 1   | recipient               | `"self"` (minter) |
+| 2   | quantity                | `"qty"` (matches `--qty`) |
+| 3   | `presaleNumberCanMint`  | `0` for public phase |
+| 4   | merkle proof            | `[]` for public phase |
+
+To find the right TLStacks deployment for any Transient drop, look up [`deployments.json`](https://github.com/Transient-Labs/tl-stacks/blob/main/deployments.json) (v2.3.1 currently hosts Still Alive).
 
 ---
 
