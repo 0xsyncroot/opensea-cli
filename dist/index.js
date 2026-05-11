@@ -474,16 +474,17 @@ async function runMintFlow(cfg, flags, mode, autoYes) {
     log.kv('etherscan', `https://etherscan.io/tx/${prepared.txHash}`);
     // Auto-transfer to destination if --to is provided
     if (flags.to) {
-        const tokenIds = extractMintedIds(receipt, cfg.contract, minter.address);
-        if (tokenIds.length === 0) {
+        const tokens = extractMintedIds(receipt, cfg.contract, minter.address);
+        if (tokens.length === 0) {
             log.warn('no ERC721 Transfer(from=0x0) events found — cannot identify minted tokens to forward');
             log.dim('this is normal for ERC1155 or non-standard mints; transfer manually');
             return;
         }
         log.banner(`AUTO-TRANSFER → ${flags.to}`);
-        log.kv('tokens minted', `${tokenIds.length}  [${tokenIds.join(', ')}]`);
+        log.kv('tokens minted', `${tokens.length}  [${tokens.map((t) => t.tokenId).join(', ')}]`);
+        log.kv('NFT contract', tokens[0].nftContract);
         log.kv('destination', flags.to);
-        const outcomes = await transferAllTo(provider, minter, cfg.contract, flags.to, tokenIds);
+        const outcomes = await transferAllTo(provider, minter, cfg.contract, flags.to, tokens);
         printTransferSummary(outcomes, flags.to);
     }
 }

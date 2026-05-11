@@ -13,19 +13,25 @@ function topicAddress(addr: string): string {
   return '0x' + addr.slice(2).toLowerCase().padStart(64, '0');
 }
 
-export function extractMintedIds(receipt: TransactionReceipt, contract: string, minter: string): bigint[] {
-  const contractLc = contract.toLowerCase();
+export interface MintedToken { nftContract: string; tokenId: bigint; }
+
+// Find ERC-721 mint events (Transfer from 0x0 to minter) in the receipt.
+// We do NOT filter by the called contract address — for sale-contract /
+// minter-proxy patterns (e.g. Transient Labs TLStacks calling externalMint
+// on the underlying ERC721TL), the Transfer event is emitted by the NFT
+// contract, not the contract the user called.
+export function extractMintedIds(receipt: TransactionReceipt, _contract: string, minter: string): MintedToken[] {
   const minterTopic = topicAddress(minter);
-  const ids: bigint[] = [];
+  const out: MintedToken[] = [];
   for (const ev of receipt.logs) {
-    if (ev.address.toLowerCase() !== contractLc) continue;
     if (ev.topics[0] !== TRANSFER_TOPIC) continue;
-    if (ev.topics.length !== 4) continue;          // ERC721 only (3-indexed). ERC20 has 3 topics.
-    if (ev.topics[1] !== ZERO_TOPIC) continue;     // must be mint (from = 0x0)
+    if (ev.topics.length !== 4) continue;           // ERC721 has 4 topics; ERC20 has 3
+    if (ev.topics[1] !== ZERO_TOPIC) continue;      // mint = from 0x0
     if (ev.topics[2].toLowerCase() !== minterTopic) continue;
-    try { ids.push(BigInt(ev.topics[3]!)); } catch { /* skip malformed */ }
+    try { out.push({ nftContract: ev.address, tokenId: BigInt(ev.topics[3]!) }); }
+    catch { /* skip malformed */ }
   }
-  return ids;
+  return out;
 }
 
 export interface TransferOutcome {
@@ -39,12 +45,11 @@ export interface TransferOutcome {
 export async function transferAllTo(
   provider: JsonRpcProvider,
   minter: Wallet,
-  contract: string,
+  _calledContract: string,
   destination: string,
-  tokenIds: bigint[],
+  tokens: MintedToken[],
 ): Promise<TransferOutcome[]> {
   const dest = getAddress(destination);
-  const cAddr = getAddress(contract);
   const iface = new Interface([
     'function safeTransferFrom(address from, address to, uint256 tokenId)',
   ]);
@@ -52,9 +57,11 @@ export async function transferAllTo(
   const outcomes: TransferOutcome[] = [];
   let nonce = await provider.getTransactionCount(minter.address, 'pending');
 
-  for (let i = 0; i < tokenIds.length; i++) {
-    const id = tokenIds[i]!;
-    log.step(`Transfer ${i + 1}/${tokenIds.length} — tokenId ${id} → ${dest}`);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    const id = tok.tokenId;
+    const cAddr = getAddress(tok.nftContract);
+    log.step(`Transfer ${i + 1}/${tokens.length} — tokenId ${id} (${cAddr}) → ${dest}`);
     try {
       const data = iface.encodeFunctionData('safeTransferFrom', [minter.address, dest, id]);
       const block = await provider.getBlock('latest');
